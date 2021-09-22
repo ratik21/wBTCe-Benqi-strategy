@@ -80,10 +80,10 @@ def deployed():
     controller.setStrategy(WANT, strategy, {"from": deployer})
 
     ## Uniswap some tokens here
-    router = interface.IUniswapRouterV2("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
-    router.swapExactETHForTokens(
-        0,  ## Mint out
-        ["0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", WANT],
+    router = interface.IJoeRouter02("0x60aE616a2155Ee3d9A68541Ba4544862310933d4")
+    router.swapExactAVAXForTokens(
+        0, ## Mint out
+        ["0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", WANT],
         deployer,
         9999999999999999,
         {"from": deployer, "value": 5000000000000000000},
