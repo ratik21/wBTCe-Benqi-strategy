@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.6.11;
+pragma solidity ^0.6.2;
 pragma experimental ABIEncoderV2;
 
 import "../deps/@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
@@ -10,6 +10,10 @@ import "../deps/@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol
 import "../deps/@openzeppelin/contracts-upgradeable/token/ERC20/SafeERC20Upgradeable.sol";
 
 import "../interfaces/badger/IController.sol";
+import "../interfaces/benqi/IBenqiERC20Delegator.sol";
+import "../interfaces/benqi/IBenqiUnitroller.sol";
+import "../interfaces/erc20/IERC20.sol";
+import "../interfaces/traderjoe/IJoeRouter02.sol";
 
 import {BaseStrategy} from "../deps/BaseStrategy.sol";
 
@@ -19,8 +23,18 @@ contract MyStrategy is BaseStrategy {
     using SafeMathUpgradeable for uint256;
 
     // address public want // Inherited from BaseStrategy, the token the strategy wants, swaps into and tries to grow
-    address public lpComponent; // Token we provide liquidity with
-    address public reward; // Token we farm and swap to want / lpComponent
+    address public qiToken; // Token we provide liquidity with (qiBTC)
+    address public reward; // Token we farm and swap to want / qiToken
+
+    // benqi unitroller/comptroller address
+    address public constant BENQI_UNITROLLER =
+        0x486Af39519B4Dc9a7fCcd318217352830E8AD9b4;
+    address public constant JOE_ROUTER_V2 =
+        0x60aE616a2155Ee3d9A68541Ba4544862310933d4;
+    address public constant WAVAX = 0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7; // wrapped AVAX
+
+    address public constant QI = 0x8729438EB15e2C8B576fCc6AeCdA6A148776C0F5; // BENQI (QI) Token
+    uint256 _balanceOfPool;
 
     // Used to signal to the Badger Tree that rewards where sent to it
     event TreeDistribution(
@@ -48,7 +62,7 @@ contract MyStrategy is BaseStrategy {
         );
         /// @dev Add config here
         want = _wantConfig[0];
-        lpComponent = _wantConfig[1];
+        qiToken = _wantConfig[1];
         reward = _wantConfig[2];
 
         performanceFeeGovernance = _feeConfig[0];
@@ -56,14 +70,22 @@ contract MyStrategy is BaseStrategy {
         withdrawalFee = _feeConfig[2];
 
         /// @dev do one off approvals here
-        // IERC20Upgradeable(want).safeApprove(gauge, type(uint256).max);
+        IERC20(want).approve(qiToken, type(uint256).max);
+
+        // approval for joe_router
+        IERC20(QI).approve(JOE_ROUTER_V2, type(uint256).max);
+
+        // enter market
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(qiToken);
+        IBenqiUnitroller(BENQI_UNITROLLER).enterMarkets(tokens);
     }
 
     /// ===== View Functions =====
 
     // @dev Specify the name of the strategy
     function getName() external pure override returns (string memory) {
-        return "StrategyName";
+        return "wBTC.e-QI-AVAX-strategy";
     }
 
     // @dev Specify the version of the Strategy, for upgrades
@@ -73,12 +95,16 @@ contract MyStrategy is BaseStrategy {
 
     /// @dev Balance of want currently held in strategy positions
     function balanceOfPool() public view override returns (uint256) {
-        return 0;
+        // return locally tracked balance
+        return _balanceOfPool;
+
+        // NOTE: ideally we should use 'balanceOfUnderlying' here, but this isn't "view"
+        //return IBenqiERC20Delegator(qiToken).balanceOfUnderlying(address(this));
     }
 
     /// @dev Returns true if this strategy requires tending
     function isTendable() public view override returns (bool) {
-        return true;
+        return balanceOfWant() > 0;
     }
 
     // @dev These are the tokens that cannot be moved except by the vault
@@ -90,7 +116,7 @@ contract MyStrategy is BaseStrategy {
     {
         address[] memory protectedTokens = new address[](3);
         protectedTokens[0] = want;
-        protectedTokens[1] = lpComponent;
+        protectedTokens[1] = qiToken;
         protectedTokens[2] = reward;
         return protectedTokens;
     }
@@ -112,51 +138,84 @@ contract MyStrategy is BaseStrategy {
     /// @dev invest the amount of want
     /// @notice When this function is called, the controller has already sent want to this
     /// @notice Just get the current balance and then invest accordingly
-    function _deposit(uint256 _amount) internal override {}
+    function _deposit(uint256 _amount) internal override {
+        _balanceOfPool += _amount;
+        IBenqiERC20Delegator(qiToken).mint(_amount);
+    }
 
     /// @dev utility function to withdraw everything for migration
-    function _withdrawAll() internal override {}
+    function _withdrawAll() internal override {
+        IBenqiERC20Delegator(qiToken).redeem(balanceOfPool());
+        _balanceOfPool -= balanceOfPool();
+    }
 
-    /// @dev withdraw the specified amount of want, liquidate from lpComponent to want, paying off any necessary debt for the conversion
+    /// @dev withdraw the specified amount of want, liquidate from qiToken to want, paying off any necessary debt for the conversion
     function _withdrawSome(uint256 _amount)
         internal
         override
         returns (uint256)
     {
+        if (_amount > balanceOfPool()) {
+            _amount = balanceOfPool();
+        }
+        IBenqiERC20Delegator(qiToken).redeemUnderlying(_amount);
+        _balanceOfPool -= _amount;
+
         return _amount;
     }
 
     /// @dev Harvest from strategy mechanics, realizing increase in underlying position
-    function harvest() external whenNotPaused returns (uint256 harvested) {
+    function harvest()
+        external
+        payable
+        whenNotPaused
+        returns (uint256 harvested)
+    {
         _onlyAuthorizedActors();
 
         uint256 _before = IERC20Upgradeable(want).balanceOf(address(this));
+        uint256 _avaxBefore = address(this).balance;
 
-        // Write your code here
+        // claim QI rewards
+        IBenqiUnitroller(BENQI_UNITROLLER).claimReward(0, address(this));
+        // claim AVAX rewards
+        IBenqiUnitroller(BENQI_UNITROLLER).claimReward(1, address(this));
+
+        // swap QI -> wBTC.e
+        uint256 _qiRewards = IERC20Upgradeable(QI).balanceOf(address(this));
+        if (_qiRewards > 0) {
+            address[] memory path = new address[](3);
+            path[0] = QI;
+            path[1] = WAVAX;
+            path[2] = want;
+
+            IJoeRouter02(JOE_ROUTER_V2).swapExactTokensForTokens(
+                _qiRewards,
+                0,
+                path,
+                address(this),
+                now + 120
+            );
+        }
+
+        // swap AVAX -> wBTC.e
+        uint256 _avaxRewards = address(this).balance.sub(_avaxBefore);
+        if (_avaxRewards > 0) {
+            address[] memory path = new address[](2);
+            path[0] = WAVAX;
+            path[1] = want;
+
+            IJoeRouter02(JOE_ROUTER_V2).swapExactAVAXForTokens{
+                value: _avaxRewards
+            }(0, path, address(this), now + 120);
+        }
 
         uint256 earned =
             IERC20Upgradeable(want).balanceOf(address(this)).sub(_before);
 
         /// @notice Keep this in so you get paid!
         (uint256 governancePerformanceFee, uint256 strategistPerformanceFee) =
-            _processRewardsFees(earned, reward);
-
-        // TODO: If you are harvesting a reward token you're not compounding
-        // You probably still want to capture fees for it
-        // // Process Sushi rewards if existing
-        // if (sushiAmount > 0) {
-        //     // Process fees on Sushi Rewards
-        //     // NOTE: Use this to receive fees on the reward token
-        //     _processRewardsFees(sushiAmount, SUSHI_TOKEN);
-
-        //     // Transfer balance of Sushi to the Badger Tree
-        //     // NOTE: Send reward to badgerTree
-        //     uint256 sushiBalance = IERC20Upgradeable(SUSHI_TOKEN).balanceOf(address(this));
-        //     IERC20Upgradeable(SUSHI_TOKEN).safeTransfer(badgerTree, sushiBalance);
-        //
-        //     // NOTE: Signal the amount of reward sent to the badger tree
-        //     emit TreeDistribution(SUSHI_TOKEN, sushiBalance, block.number, block.timestamp);
-        // }
+            _processRewardsFees(earned, want);
 
         /// @dev Harvest event that every strategy MUST have, see BaseStrategy
         emit Harvest(earned, block.number);
@@ -175,6 +234,11 @@ contract MyStrategy is BaseStrategy {
     /// @dev Rebalance, Compound or Pay off debt here
     function tend() external whenNotPaused {
         _onlyAuthorizedActors();
+
+        uint256 toDeposit = balanceOfWant();
+        if (toDeposit > 0) {
+            _deposit(toDeposit);
+        }
     }
 
     /// ===== Internal Helper Functions =====
@@ -198,4 +262,9 @@ contract MyStrategy is BaseStrategy {
             strategist
         );
     }
+
+    /**
+     * @notice payable function needed to receive AVAX
+     */
+    receive() external payable {}
 }
