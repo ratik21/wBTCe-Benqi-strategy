@@ -1,0 +1,14 @@
+development:
+  - name: Ganache-CLI (Avalanche Fork)
+    chainid: 43114
+    id: avax-fork
+    explorer: https://cchain.explorer.avax.network/
+    cmd: ganache-cli
+    host: http://127.0.0.1
+    timeout: 60
+    cmd_settings:
+      port: 8545
+      gas_limit: 20000000
+      accounts: 10
+      fork: https://api.avax.network/ext/bc/C/rpc
+      default_balance: 100000 ether
