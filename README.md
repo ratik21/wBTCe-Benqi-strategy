@@ -4,12 +4,11 @@
 
 This strategy will deposit wBTC.e on [Benqi](https://app.benqi.fi/overview) to earn interest and rewards. It will then claim the rewards to increase the amount of wBTC.e
 
-
-*NOTE:* `wBTC.e` is `wBTC` token briged to Avalanche chain. Bridge can be used [here](https://bridge.avax.network/).
+*NOTE:* `wBTC.e` is `wBTC` token bridged from Etherum to Avalanche Cchain. Bridge can be used [here](https://bridge.avax.network/).
 
 ## Strategy Visual
 
-![My First Board (3)](https://user-images.githubusercontent.com/33264364/134956862-c3e2f7ba-be9b-4cd2-9a21-b0c93fde4376.jpg)
+![My First Board](https://user-images.githubusercontent.com/33264364/134966733-c06e1cb2-1eb9-403a-8c1d-b9ccfd0fa489.jpg)
 
 ## Deposit
 
@@ -32,6 +31,11 @@ Total APY = *1.13%* + *1.52%* + *0.89%* = **3.54%**
 ## Network Configuration
 
 Network configuration for avalanche mainnet fork is not present by default in brownie's `network-config.yml`. A custom configuation for launching avalanche mainnet fork (`ID = avax-fork`) has been added in [`./network-config.yaml](./network-config.yaml).
+
+## Tests
+
+All tests are passing.
+![image](https://user-images.githubusercontent.com/33264364/134967085-ec28c6eb-30c3-4140-9da6-dc597c8af8ed.png)
 
 ## Risks
 
