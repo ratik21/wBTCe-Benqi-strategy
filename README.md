@@ -27,6 +27,8 @@ The rewards distribution is as follows (on 27 Sept 2021):
 
 Total APY = *1.13%* + *1.52%* + *0.89%* = **3.54%**
 
+![image](https://user-images.githubusercontent.com/33264364/134965711-78fe8ef0-bd3c-439c-9395-7d917e8dee82.png)
+
 ## Network Configuration
 
 Network configuration for avalanche mainnet fork is not present by default in brownie's `network-config.yml`. A custom configuation for launching avalanche mainnet fork (`ID = avax-fork`) has been added in [`./network-config.yaml](./network-config.yaml).
