@@ -99,6 +99,7 @@ contract MyStrategy is BaseStrategy {
         return _balanceOfPool;
 
         // NOTE: ideally we should use 'balanceOfUnderlying' here, but this isn't "view"
+        // and the code here is currently integrated with multicall (aggregating view functions)
         //return IBenqiERC20Delegator(qiToken).balanceOfUnderlying(address(this));
     }
 
